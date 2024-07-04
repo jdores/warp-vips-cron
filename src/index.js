@@ -1,37 +1,76 @@
 /**
- * Welcome to Cloudflare Workers!
- *
- * This is a template for a Scheduled Worker: a Worker that can run on a
- * configurable interval:
- * https://developers.cloudflare.com/workers/platform/triggers/cron-triggers/
- *
- * - Run `npm run dev` in your terminal to start a development server
- * - Run `curl "http://localhost:8787/__scheduled?cron=*+*+*+*+*"` to see your worker in action
- * - Run `npm run deploy` to publish your worker
- *
- * Learn more at https://developers.cloudflare.com/workers/
+ * This worker will make a mapping of device ids to virtual IPs and save the output to an R2 bucket. R2 bucket specified in wrangler.toml
+ * Cron schedule defined in wrangler.toml
  */
 
 export default {
-	async fetch(req) {
-		const url = new URL(req.url)
-		url.pathname = "/__scheduled";
-		url.searchParams.append("cron", "* * * * *");
-		return new Response(`To test the scheduled handler, ensure you have used the "--test-scheduled" then try running "curl ${url.href}".`);
-	},
-
-	// The scheduled handler is invoked at the interval set in our wrangler.toml's
-	// [[triggers]] configuration.
 	async scheduled(event, env, ctx) {
-		// A Cron Trigger can make requests to other endpoints on the Internet,
-		// publish to a Queue, query a D1 Database, and much more.
-		//
-		// We'll keep it simple and make an API call to a Cloudflare API:
-		let resp = await fetch('https://api.cloudflare.com/client/v4/ips');
-		let wasSuccessful = resp.ok ? 'success' : 'fail';
-
-		// You could store this result in KV, write to a D1 Database, or publish to a Queue.
-		// In this template, we'll just log the result:
-		console.log(`trigger fired at ${event.cron}: ${wasSuccessful}`);
-	},
-};
+	  // Inputs for Cloudflare API calls. Stored locally in .dev.var and in the edge in Workers secrets
+	  const accountId = env.ACCOUNT_ID;
+	  const userEmail = env.USER_EMAIL;
+	  const apiKey = env.API_KEY;
+  
+	  // STEP 01 - Get devices
+	  const devicesUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/devices`;
+	  const response = await fetch(devicesUrl, {
+		method: 'GET',
+		headers: {
+		  'X-Auth-Email': userEmail,
+		  'X-Auth-Key': apiKey,
+		  'Content-Type': 'application/json'
+		}
+	  });
+	  const data = await response.json();
+	  console.log(data)
+  
+	  // STEP 02 - IF Response is OK, we get the WARP virtual IP for each of the device ids
+	  // And we store the information fields we care about: device id, email of person associated, name of device, Virtual IP
+	  if (response.ok) {
+		const devices = data.result;
+		const deviceInfo = [];
+  
+		for (let device of devices) {
+		  let virtualIpUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/teamnet/devices/ips?device_ids[0]=${device.id}`;
+		  let VirtualIpResponse = await fetch(virtualIpUrl, {
+			method: 'GET',
+			headers: {
+			  'X-Auth-Email': userEmail,
+			  'X-Auth-Key': apiKey,
+			  'Content-Type': 'application/json'
+			}
+		  });
+  
+		  let VirtualIpData = await VirtualIpResponse.json();
+  
+		  if (VirtualIpResponse.ok) {
+			let VirtualIps = VirtualIpData.result;
+  
+			deviceInfo.push({
+			  id: device.id,
+			  email: device.user.email,
+			  name: device.name,
+			  version: VirtualIps[0].device_ips.ipv4
+			});
+		  } else {
+			deviceInfo.push({
+			  id: device.id,
+			  email: device.user.email,
+			  name: device.name,
+			  version: 'Unknown'  // Handle case where details could not be fetched
+			});
+		  }
+		}
+  
+		// Convert to JSON format
+		const jsonOutput = JSON.stringify(deviceInfo, null, 2);
+  
+		// Save the JSON to R2 bucket
+		const objectName = `warp_vips_${new Date().toISOString()}.json`;
+		const uploadFile = new Blob([jsonOutput], { type: 'application/json' });
+		await env.MY_BUCKET.put(objectName, uploadFile);
+  
+	  } else {
+		console.error(`Error fetching devices: ${JSON.stringify(data)}`);
+	  }
+	}
+  };

@@ -7,7 +7,11 @@ compatibility_date = "2024-07-01"
 # Docs: https://developers.cloudflare.com/workers/platform/triggers/cron-triggers/
 # Configuration: https://developers.cloudflare.com/workers/wrangler/configuration/#triggers
 [triggers]
-crons = ["* * * * *"] # * * * * * = run every minute
+crons = ["0 * * * *"] # * * * * * = run every minute
+
+[[r2_buckets]]
+binding = "MY_BUCKET"
+bucket_name = "warp-vips"
 
 # Automatically place your workloads in an optimal location to minimize latency.
 # If you are running back-end logic in a Worker, running it closer to your back-end infrastructure
@@ -98,7 +102,7 @@ crons = ["* * * * *"] # * * * * * = run every minute
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#r2-buckets
 # [[r2_buckets]]
 # binding = "MY_BUCKET"
-# bucket_name = "my-bucket"
+# bucket_name = "<YOUR_BUCKET_NAME>"
 
 # Bind another Worker service. Use this binding to call another Worker without network overhead.
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#service-bindings
